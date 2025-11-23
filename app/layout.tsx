@@ -3,7 +3,7 @@ import { Work_Sans } from "next/font/google";
 import "./globals.css";
 import PrivyProviderWrapper from "@/components/privy-provider";
 
-const workSans = Work_Sans({ subsets: ["latin"] });
+const workSans = Work_Sans({ subsets: ["latin"], fallback: ["system-ui", "sans-serif"] });
 
 export const metadata: Metadata = {
   title: "Protocol 402",
