@@ -266,6 +266,7 @@ class ArcListener:
         self.oracle = oracle
         self.hedge_manager = hedge_manager
         self.trades_processed = 0
+        self.active_positions = []
         log(f"👂 Arc Listener initialized", Colors.MAGENTA)
         log(f"   Contract: {contract_address}", Colors.CYAN)
     
@@ -292,10 +293,73 @@ class ArcListener:
         log(f"   Synthetic Execution: No Bridging Required", Colors.YELLOW)
         log(f"   Tracking Position #{position_id} for Liquidation Risk...", Colors.MAGENTA)
         
-        # In a real implementation, we would add this to a tracking list
-        # self.active_positions.append({...})
+        # Add to tracking list
+        self.active_positions.append({
+            'id': position_id,
+            'market_id': market_id,
+            'amount': amount,
+            'leverage': leverage,
+            'entry_price': entry_price,
+            'side': side,
+            'timestamp': time.time()
+        })
         
         log(f"✅ Position #{position_id} Active | Entry: {entry_price} | Liq Price: Calculating...\n", Colors.GREEN)
+
+    def check_liquidations(self):
+        """
+        Check active positions for liquidation conditions
+        Liquidation Threshold: -80% PnL
+        """
+        if not self.active_positions:
+            return
+
+        log_header("LIQUIDATION CHECK")
+        log(f"🔍 Checking {len(self.active_positions)} active positions...", Colors.CYAN)
+        
+        positions_to_remove = []
+        
+        for pos in self.active_positions:
+            # Fetch current price
+            price_data = self.oracle.get_price(pos['market_id'])
+            if not price_data:
+                continue
+                
+            current_price = price_data['yes_price'] * 100 if pos['side'] == 'YES' else price_data['no_price'] * 100
+            
+            # Calculate PnL
+            # PnL % = ((Current Price - Entry Price) / Entry Price) * Leverage
+            # Simplified for prediction markets (0-100 range):
+            price_diff = (current_price - pos['entry_price'])
+            pnl_percent = (price_diff / 100) * pos['leverage']
+            
+            # Invert PnL if Short/NO? 
+            # Actually, if I bought NO at 40 (Entry), and price goes to 30, I win.
+            # My logic above: current_price is the price of the asset I hold.
+            # If I hold NO, current_price is NO price. So logic holds.
+            
+            log(f"   Pos #{pos['id']} ({pos['side']} {pos['leverage']}x): Entry {pos['entry_price']:.1f} -> Curr {current_price:.1f} | PnL: {pnl_percent*100:.1f}%", Colors.CYAN)
+            
+            # Check Threshold (-80%)
+            if pnl_percent <= -0.80:
+                log(f"🚨 LIQUIDATION TRIGGERED for Position #{pos['id']}", Colors.RED)
+                log(f"   Reason: PnL {pnl_percent*100:.1f}% <= -80%", Colors.RED)
+                log(f"   Executing settlePosition({pos['id']})...", Colors.MAGENTA)
+                
+                # Simulate Contract Call
+                # self.contract.functions.settlePosition(pos['id']).transact(...)
+                time.sleep(1)
+                
+                log(f"💀 Position #{pos['id']} LIQUIDATED", Colors.RED)
+                positions_to_remove.append(pos)
+        
+        # Remove liquidated positions
+        for pos in positions_to_remove:
+            self.active_positions.remove(pos)
+            
+        if not positions_to_remove:
+            log(f"✅ All positions safe", Colors.GREEN)
+        print("")
 
     def process_position_opened(self, event: Dict[str, Any]):
         """
@@ -355,6 +419,8 @@ class ArcListener:
         log(f"🎯 Listening for PositionOpened events...", Colors.GREEN)
         log(f"⏱️  Poll interval: {poll_interval}s\n", Colors.CYAN)
         
+        last_check_time = time.time()
+        
         while True:
             try:
                 # Poll for new events
@@ -362,6 +428,11 @@ class ArcListener:
                 
                 for event in events:
                     self.process_position_opened(event)
+                
+                # Check Liquidations every 10 seconds
+                if time.time() - last_check_time > 10:
+                    self.check_liquidations()
+                    last_check_time = time.time()
                 
                 # Periodic health check
                 if self.trades_processed % 10 == 0 and self.trades_processed > 0:

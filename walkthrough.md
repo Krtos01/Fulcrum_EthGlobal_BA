@@ -87,3 +87,14 @@ The backend agent now implements a "Router" logic to handle trades differently b
     3. Agent tracks the position for **Liquidation Risk**.
     4. Acts as an Oracle to monitor price vs entry price.
 
+## 🛡️ Liquidation Logic
+To protect the vault from bad debt, the agent implements a robust liquidation system:
+
+- **Monitoring**: Checks all active leverage positions every 10 seconds.
+- **Oracle**: Fetches real-time prices from Polymarket.
+- **Trigger Condition**: If a position's PnL drops below **-80%**.
+- **Execution**:
+    1. Logs "LIQUIDATION TRIGGERED".
+    2. Calls `settlePosition` on the smart contract (simulated).
+    3. Closes the position to prevent further loss.
+
