@@ -66,9 +66,9 @@ function calculateAMMPrices(yesVolume: number, noVolume: number, initialLiquidit
 
   const total = yesShares + noShares
 
-  // Price = opposite shares / total shares
-  const yesPrice = (noShares / total) * 100
-  const noPrice = (yesShares / total) * 100
+  // Price = own shares / total shares (when you buy YES, YES price goes UP)
+  const yesPrice = (yesShares / total) * 100
+  const noPrice = (noShares / total) * 100
 
   return { yesPrice, noPrice }
 }
@@ -78,14 +78,16 @@ export default function Home() {
   const [showIntro, setShowIntro] = useState(true)
   const [selectedMarket, setSelectedMarket] = useState<number | null>(null)
   const [leverage, setLeverage] = useState(1)
-  const [balance, setBalance] = useState<string | null>(null)
+  const [usdcBalance, setUsdcBalance] = useState<number | null>(null)
   const [positions, setPositions] = useState<Position[]>([])
+  const [backendPositions, setBackendPositions] = useState<any[]>([]);
   const [refreshPositions, setRefreshPositions] = useState(0)
   const [closingPositionId, setClosingPositionId] = useState<number | null>(null)
   const [marketStats, setMarketStats] = useState<Record<number, MarketStats>>({})
   const marketsRef = useRef<HTMLDivElement>(null)
 
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null)
+  const [bridgeTxHash, setBridgeTxHash] = useState<string | null>(null)
 
   // Show notification helper
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
@@ -115,25 +117,24 @@ export default function Home() {
 
   // Fetch balance when wallet is connected
   useEffect(() => {
-    const fetchBalance = async () => {
+    const fetchBalances = async () => {
       if (wallets.length > 0) {
-        try {
-          const wallet = wallets[0]
-          const ethereumProvider = await wallet.getEthereumProvider()
-          const provider = new ethers.BrowserProvider(ethereumProvider)
-          const address = wallet.address
-          const balanceWei = await provider.getBalance(address)
-          const balanceUsdc = ethers.formatEther(balanceWei)
-          setBalance(balanceUsdc)
-        } catch (error) {
-          console.error("Failed to fetch balance:", error)
-        }
-      } else {
-        setBalance(null)
+        const wallet = wallets[0]
+        await wallet.switchChain(5042002)
+        const ethereumProvider = await wallet.getEthereumProvider()
+        const provider = new ethers.BrowserProvider(ethereumProvider)
+        const signer = await provider.getSigner()
+        const balance = await provider.getBalance(await signer.getAddress())
+        setUsdcBalance(Number(ethers.formatEther(balance)))
       }
     }
-    fetchBalance()
+    fetchBalances()
   }, [wallets])
+
+  // Fetch bridge TX for spot trades (1x leverage)
+  // This should be handled inside ExpandedMarketView where txSuccess state lives
+  // Removed from here to avoid dependency issues
+
 
   // Fetch user positions
   const fetchPositions = async () => {
@@ -199,7 +200,30 @@ export default function Home() {
 
   useEffect(() => {
     fetchPositions()
+    const interval = setInterval(() => {
+      fetchPositions()
+    }, 15000) // Poll every 15 seconds
+
+    return () => clearInterval(interval)
   }, [wallets, refreshPositions])
+
+  // Fetch backend-tracked leveraged positions
+  useEffect(() => {
+    const fetchBackendPositions = async () => {
+      try {
+        const res = await fetch('http://localhost:5001/api/positions')
+        if (res.ok) {
+          const data = await res.json()
+          setBackendPositions(data.positions)
+        }
+      } catch (e) {
+        console.error('Failed to fetch backend positions:', e)
+      }
+    }
+    fetchBackendPositions()
+    const interval = setInterval(fetchBackendPositions, 15000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Handle close position
   const handleClosePosition = async (positionId: number) => {
@@ -257,6 +281,21 @@ export default function Home() {
 
       const pnlFormatted = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`
       showNotification(`Position closed! Realized PnL: ${pnlFormatted}`, pnl >= 0 ? 'success' : 'error')
+
+      // Send to backend webhook for tracking
+      try {
+        await fetch('http://localhost:5001/api/position/closed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            positionId: position.id,
+            realizedPnl: pnl
+          })
+        })
+        console.log("Position closed event sent to backend for tracking")
+      } catch (webhookError) {
+        console.error("Webhook error (non-critical):", webhookError)
+      }
 
       // Remove from local state immediately for UI responsiveness
       setPositions(prev => prev.filter(p => p.id !== positionId))
@@ -357,7 +396,7 @@ export default function Home() {
           <div className="w-8 h-8 bg-foreground rounded-lg flex items-center justify-center">
             <TrendingUp className="w-5 h-5 text-background" />
           </div>
-          <span className="font-bold text-xl tracking-tight">Protocol 402</span>
+          <span className="font-bold text-xl tracking-tight">Fulcrum</span>
         </div>
 
         <div
@@ -396,7 +435,7 @@ export default function Home() {
             {authenticated && user?.wallet ? (
               <span className="flex items-center gap-2">
                 <span>{`${user.wallet.address.slice(0, 6)}...${user.wallet.address.slice(-4)} `}</span>
-                {balance && <span className="text-xs opacity-80">| {parseFloat(balance).toFixed(2)} USDC</span>}
+                {usdcBalance !== null && <span className="text-xs opacity-80">| {usdcBalance.toFixed(2)} USDC</span>}
               </span>
             ) : "Connect Wallet"}
           </button>
@@ -410,11 +449,11 @@ export default function Home() {
             <div className="max-w-4xl space-y-8">
               <div className="space-y-4">
                 <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tighter leading-[0.9]">
-                  Bet on your <br />
-                  <span className="text-muted-foreground">convictions.</span>
+                  leverage <br />
+                  <span className="text-muted-foreground">EVERYTHING.</span>
                 </h1>
                 <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto font-light">
-                  Autonomous leverage agent on Arc Network. Trade on news, politics, and culture with AI precision.
+                  The First Autonomous Hybrid Prediction Market on Arc. Trade on news, politics, and culture with AI precision.
                 </p>
               </div>
 
@@ -428,8 +467,8 @@ export default function Home() {
               </div>
 
               <div className="pt-12 grid grid-cols-3 gap-8 md:gap-16 text-center">
-                <Stat label="Volume Traded" value="$2.4M+" />
-                <Stat label="Arc Gas Saved" value="12K USDC" />
+                <Stat label="Hours of Work" value="36" />
+                <Stat label="Liquidated" value="10K+" />
                 <Stat label="Markets" value="500+" />
               </div>
             </div>
@@ -502,10 +541,10 @@ export default function Home() {
                       {closingPositionId === position.id ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          Closing...
+                          {position.leverage === 1 ? "Selling..." : "Closing..."}
                         </>
                       ) : (
-                        "Close Position"
+                        position.leverage === 1 ? "Sell Asset" : "Close Position"
                       )}
                     </button>
                   </div>
@@ -570,6 +609,8 @@ export default function Home() {
             positions={positions}
             handleClosePosition={handleClosePosition}
             closingPositionId={closingPositionId}
+            bridgeTxHash={bridgeTxHash} // Pass bridgeTxHash
+            setBridgeTxHash={setBridgeTxHash} // Pass setter for bridgeTxHash
           />
         )}
       </main>
@@ -653,7 +694,9 @@ function ExpandedMarketView({
   onPositionOpened,
   positions,
   handleClosePosition,
-  closingPositionId
+  closingPositionId,
+  bridgeTxHash, // Added prop
+  setBridgeTxHash // Added prop
 }: {
   market: Market;
   marketStats?: MarketStats;
@@ -667,6 +710,8 @@ function ExpandedMarketView({
   positions: Position[];
   handleClosePosition: (id: number) => Promise<void>;
   closingPositionId: number | null;
+  bridgeTxHash: string | null; // Added type
+  setBridgeTxHash: (hash: string | null) => void; // Added type
 }) {
   // Use dynamic prices if available
   const yesPrice = marketStats?.yesPrice ?? market.chance
@@ -678,6 +723,25 @@ function ExpandedMarketView({
   const [tradeAmount, setTradeAmount] = useState<string>("10") // USDC amount to spend
   const [tradeMode, setTradeMode] = useState<'BUY' | 'SELL'>('BUY') // Buy or Sell mode
   const [openedPositionId, setOpenedPositionId] = useState<number | null>(null) // Newly opened position ID
+
+  // Fetch bridge TX when spot trade succeeds
+  useEffect(() => {
+    if (txSuccess && leverage === 1) {
+      const fetchBridgeTx = async () => {
+        try {
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          const response = await fetch('/latest_bridge_tx.json')
+          if (response.ok) {
+            const data = await response.json()
+            setBridgeTxHash(data.tx_hash)
+          }
+        } catch (e) {
+          console.log('Could not fetch bridge TX:', e)
+        }
+      }
+      fetchBridgeTx()
+    }
+  }, [txSuccess, leverage, setBridgeTxHash])
 
   // --- TRADE FUNCTION ---
   const handleTrade = async (side: 'YES' | 'NO') => {
@@ -693,6 +757,7 @@ function ExpandedMarketView({
     if (!wallet) return alert("No wallet connected")
 
     setIsProcessing(true)
+    setBridgeTxHash(null) // Clear previous bridge TX hash
     console.log("Processing started...")
     try {
       // Switch to Arc Testnet if needed
@@ -704,15 +769,16 @@ function ExpandedMarketView({
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer)
 
       // Teminat Hesaplama - Amount based
+      // Arc uses USDC as native gas token with 18 decimals (not 6!)
       const amount = parseFloat(tradeAmount) || 10
       let collateralAmount
 
       if (leverage > 1) {
-        // Perpetual işlem: User-specified collateral
-        collateralAmount = ethers.parseUnits(amount.toFixed(6), 6)
+        // Perpetual işlem: User-specified collateral (18 decimals for Arc USDC)
+        collateralAmount = ethers.parseEther(amount.toString())
       } else {
-        // Spot işlem: User pays the full amount
-        collateralAmount = ethers.parseUnits(amount.toFixed(6), 6)
+        // Spot işlem: User pays the full amount (18 decimals for Arc USDC)
+        collateralAmount = ethers.parseEther(amount.toString())
       }
 
       // Fiyat Hesabı (Yüzdeyi 0-100 arası tam sayı olarak gönderiyoruz)
@@ -751,6 +817,26 @@ function ExpandedMarketView({
           const posId = Number(nextId) - 1
           console.log("Position ID:", posId) // Debug
           setOpenedPositionId(posId) // The position we just opened
+
+          // Send to backend webhook for tracking
+          try {
+            await fetch('http://localhost:5001/api/position/opened', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                positionId: posId,
+                marketId: market.title,
+                isLongYes: side === 'YES',
+                entryPrice,
+                collateral: collateralAmount.toString(),
+                leverage,
+                trader: await signer.getAddress()
+              })
+            })
+            console.log("Position sent to backend for tracking")
+          } catch (webhookError) {
+            console.error("Webhook error (non-critical):", webhookError)
+          }
         } catch (e) {
           console.error("Failed to get position ID:", e)
         }
@@ -856,6 +942,42 @@ function ExpandedMarketView({
 
             {/* Right Column - Controls */}
             <div className="space-y-4">
+              {/* Transaction Hashes - shown when trade completes */}
+              {txSuccess && txHash && (
+                <div className="bg-green-500/10 border border-green-500 rounded-lg p-3 space-y-2 animate-fade-in">
+                  <div className="flex items-center gap-2 text-green-600">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span className="font-bold text-sm">{leverage === 1 ? "Asset Bought!" : "Position Opened!"}</span>
+                  </div>
+                  <div className="text-xs space-y-1">
+                    <div className="text-muted-foreground">Transaction:</div>
+                    <a
+                      href={`https://testnet.arcscan.app/tx/${txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-green-600 hover:text-green-700 font-mono break-all"
+                    >
+                      {txHash.slice(0, 10)}...{txHash.slice(-8)}
+                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                    </a>
+                    {leverage === 1 && bridgeTxHash && (
+                      <>
+                        <div className="text-muted-foreground mt-2">CCTP Bridge:</div>
+                        <a
+                          href={`https://testnet.arcscan.app/tx/${bridgeTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-blue-600 hover:text-blue-700 font-mono break-all"
+                        >
+                          {bridgeTxHash.slice(0, 10)}...{bridgeTxHash.slice(-8)}
+                          <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Buy / Sell Tabs */}
               <div className="flex bg-secondary/30 rounded-lg p-1 mb-4">
                 <button
@@ -974,59 +1096,8 @@ function ExpandedMarketView({
                   </div>
 
                   <div className="space-y-2">
-                    {txSuccess && txHash ? (
-                      <div className="bg-green-500/10 border border-green-500 rounded-lg p-4 space-y-2 animate-fade-in">
-                        <div className="flex items-center gap-2 text-green-600">
-                          <CheckCircle2 className="w-5 h-5" />
-                          <span className="font-bold">Position Opened!</span>
-                        </div>
-                        <div className="text-xs space-y-1">
-                          <div className="text-muted-foreground">Transaction Hash:</div>
-                          <a
-                            href={`https://testnet.arcscan.app/tx/${txHash}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1 text-green-600 hover:text-green-700 font-mono break-all"
-                          >
-                            {txHash.slice(0, 10)}...{txHash.slice(-8)}
-                            <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                          </a >
-                        </div >
-                        <div className="flex gap-2 mt-3">
-                          <button
-                            onClick={onClose}
-                            className="flex-1 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg text-sm font-medium transition-colors"
-                          >
-                            Done
-                          </button>
-                          {openedPositionId && (
-                            <button
-                              onClick={async () => {
-                                setTxSuccess(false)
-                                setTxHash(null)
-                                await handleClosePosition(openedPositionId)
-                                setOpenedPositionId(null)
-                                onClose()
-                              }}
-                              className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1"
-                              disabled={closingPositionId === openedPositionId}
-                            >
-                              {closingPositionId === openedPositionId ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                  Closing...
-                                </>
-                              ) : (
-                                <>
-                                  <X className="w-4 h-4" />
-                                  Close Position
-                                </>
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </div >
-                    ) : (
+                    {/* Moved TX display to above Buy/Sell tabs */}
+                    {!txSuccess ? (
                       <>
                         <button
                           onClick={() => handleTrade('YES')}
@@ -1056,7 +1127,7 @@ function ExpandedMarketView({
                           <div className="text-xs text-muted-foreground">{noPrice.toFixed(1)}%</div>
                         </button>
                       </>
-                    )}
+                    ) : null}
                   </div>
                 </>
               ) : (

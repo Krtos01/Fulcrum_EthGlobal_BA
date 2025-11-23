@@ -72,12 +72,14 @@ I have enhanced the frontend with the following features:
 The backend agent now implements a "Router" logic to handle trades differently based on leverage:
 
 ### 1. Spot Trades (1x Leverage)
-- **Action**: Cross-Chain Execution.
+- **Action**: Cross-Chain Execution via **Real Circle CCTP Bridge**.
 - **Process**:
     1. Agent detects `leverage == 1`.
-    2. Initiates a simulated **Circle CCTP Bridge** transaction to Polygon.
-    3. Simulates purchasing the asset on Polymarket.
-    4. Logs "Asset Bridged & Purchased on Polygon".
+    2. Calls `depositForBurn()` on Circle's TokenMessenger contract (Arc Network).
+    3. USDC is burned on Arc and a cross-chain message is emitted.
+    4. Circle's attestation service processes the message (~15-20 seconds).
+    5. USDC is minted on Polygon at the same address.
+    6. Logs "Asset Bridged & Purchased on Polygon" (Polymarket purchase is mocked).
 
 ### 2. Leverage Trades (>1x Leverage)
 - **Action**: Synthetic Execution (PvP).

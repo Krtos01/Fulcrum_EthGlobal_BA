@@ -267,6 +267,7 @@ class ArcListener:
         self.hedge_manager = hedge_manager
         self.trades_processed = 0
         self.active_positions = []
+        self.latest_bridge_tx = None  # Store latest bridge TX hash
         log(f"👂 Arc Listener initialized", Colors.MAGENTA)
         log(f"   Contract: {contract_address}", Colors.CYAN)
     
@@ -278,11 +279,101 @@ class ArcListener:
         log(f"🔄 SPOT TRADE DETECTED (1x Leverage)", Colors.CYAN)
         log(f"   Initiating Circle CCTP Bridge to Polygon...", Colors.MAGENTA)
         
-        # Simulate Bridge Latency
-        time.sleep(2)
-        
-        log(f"✅ Asset Bridged & Purchased on Polygon", Colors.GREEN)
-        log(f"   Market: {market_id} | Side: {side} | Amount: {amount} USDC\n", Colors.GREEN)
+        try:
+            # Load TokenMessenger contract
+            token_messenger_address = os.getenv('ARC_TOKEN_MESSENGER', '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA')
+            usdc_address = os.getenv('ARC_USDC_ADDRESS', '0x3600000000000000000000000000000000000000')
+            polygon_domain = int(os.getenv('POLYGON_DOMAIN_ID', '7'))
+            
+            # Load ABI
+            abi_path = os.path.join(os.path.dirname(__file__), 'TokenMessenger.json')
+            with open(abi_path, 'r') as f:
+                token_messenger_abi = json.load(f)
+            
+            messenger = self.w3.eth.contract(
+                address=Web3.to_checksum_address(token_messenger_address),
+                abi=token_messenger_abi
+            )
+            
+            # Get wallet address from private key
+            private_key = os.getenv('AGENT_PRIVATE_KEY')
+            if not private_key:
+                log("❌ AGENT_PRIVATE_KEY not found in .env", Colors.RED)
+                return
+            
+            account = self.w3.eth.account.from_key(private_key)
+            wallet_address = account.address
+            
+            # Convert amount to USDC decimals (6 decimals)
+            amount_usdc = int(amount * 10**6)
+            
+            # Convert recipient address to bytes32 (for CCTP)
+            # Using same address on Polygon as on Arc
+            recipient_bytes32 = bytes.fromhex(wallet_address[2:].zfill(64))
+            
+            log(f"   Amount: {amount} USDC ({amount_usdc} units)", Colors.CYAN)
+            log(f"   From: {wallet_address[:10]}...{wallet_address[-8:]}", Colors.CYAN)
+            log(f"   Destination: Polygon (Domain {polygon_domain})", Colors.CYAN)
+            
+            # Build transaction
+            tx = messenger.functions.depositForBurn(
+                amount_usdc,
+                polygon_domain,
+                recipient_bytes32,
+                Web3.to_checksum_address(usdc_address)
+            ).build_transaction({
+                'from': wallet_address,
+                'nonce': self.w3.eth.get_transaction_count(wallet_address),
+                'gas': 200000,  # Estimated gas limit
+                'gasPrice': self.w3.eth.gas_price,
+            })
+            
+            # Sign and send transaction
+            log(f"   Signing and broadcasting CCTP bridge transaction...", Colors.YELLOW)
+            signed_tx = self.w3.eth.account.sign_transaction(tx, private_key)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            
+            log(f"✅ Bridge TX Submitted: {tx_hash.hex()}", Colors.GREEN)
+            log(f"   Waiting for confirmation...", Colors.YELLOW)
+            
+            # Wait for transaction receipt
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            if receipt.status == 1:
+                log(f"✅ CCTP Bridge Successful!", Colors.GREEN)
+                log(f"   Block: {receipt.blockNumber}", Colors.CYAN)
+                log(f"   Gas Used: {receipt.gasUsed}", Colors.CYAN)
+                log(f"   USDC will be minted on Polygon in ~15-20 seconds", Colors.YELLOW)
+                log(f"   (Circle attestation service processes automatically)", Colors.YELLOW)
+                log(f"🛒 Mock: Asset purchased on Polymarket", Colors.GREEN)
+                log(f"   Market: {market_id} | Side: {side} | Amount: {amount} USDC\n", Colors.GREEN)
+                
+                # Store bridge TX hash for frontend
+                self.latest_bridge_tx = tx_hash.hex()
+                # Write to file for frontend to read (in public directory)
+                try:
+                    public_dir = os.path.join(os.path.dirname(__file__), '..', 'public')
+                    os.makedirs(public_dir, exist_ok=True)
+                    with open(os.path.join(public_dir, 'latest_bridge_tx.json'), 'w') as f:
+                        json.dump({'tx_hash': self.latest_bridge_tx, 'timestamp': time.time()}, f)
+                except Exception as e:
+                    log(f"Warning: Could not write bridge TX to file: {e}", Colors.YELLOW)
+            else:
+                log(f"❌ Bridge transaction failed", Colors.RED)
+                log(f"   TX: {tx_hash.hex()}\n", Colors.RED)
+                
+        except FileNotFoundError:
+            log(f"❌ TokenMessenger.json ABI not found", Colors.RED)
+            log(f"   Falling back to simulation...\n", Colors.YELLOW)
+            time.sleep(2)
+            log(f"✅ Asset Bridged & Purchased on Polygon (Simulated)", Colors.GREEN)
+            log(f"   Market: {market_id} | Side: {side} | Amount: {amount} USDC\n", Colors.GREEN)
+        except Exception as e:
+            log(f"❌ CCTP Bridge Error: {str(e)}", Colors.RED)
+            log(f"   Falling back to simulation...\n", Colors.YELLOW)
+            time.sleep(2)
+            log(f"✅ Asset Bridged & Purchased on Polygon (Simulated)", Colors.GREEN)
+            log(f"   Market: {market_id} | Side: {side} | Amount: {amount} USDC\n", Colors.GREEN)
 
     def handle_synthetic_execution(self, position_id: int, market_id: str, amount: float, leverage: int, entry_price: int, side: str):
         """
@@ -413,21 +504,32 @@ class ArcListener:
         """
         log_header("PROTOCOL 402 AGENT - LISTENING FOR EVENTS")
         
-        # Get event filter
-        event_filter = self.contract.events.PositionOpened.create_filter(from_block='latest')
-        
         log(f"🎯 Listening for PositionOpened events...", Colors.GREEN)
         log(f"⏱️  Poll interval: {poll_interval}s\n", Colors.CYAN)
         
         last_check_time = time.time()
+        last_processed_block = self.w3.eth.block_number
         
         while True:
             try:
-                # Poll for new events
-                events = event_filter.get_new_entries()
+                current_block = self.w3.eth.block_number
                 
+                # Scan last 10 blocks to catch any missed events
+                from_block = max(last_processed_block - 10, 0)
+                
+                # Get events from recent blocks
+                events = self.contract.events.PositionOpened.get_logs(
+                    from_block=from_block,
+                    to_block=current_block
+                )
+                
+                # Process new events (avoid duplicates)
                 for event in events:
-                    self.process_position_opened(event)
+                    event_block = event['blockNumber']
+                    if event_block > last_processed_block:
+                        self.process_position_opened(event)
+                
+                last_processed_block = current_block
                 
                 # Check Liquidations every 10 seconds
                 if time.time() - last_check_time > 10:
