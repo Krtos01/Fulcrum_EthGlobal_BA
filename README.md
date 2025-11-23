@@ -1,69 +1,71 @@
-# Protocol 402 - Autonomous Prediction Market Agent 🧠
+# ⚡ FULCRUM
 
-Protocol 402 is an autonomous liquidity vault built on the **Arc Network**. It uses an AI Agent to manage capital efficiency by routing trades between **Cross-Chain Execution (Spot)** and **Synthetic Execution (Leverage)**.
+**The first Autonomous Hybrid Prediction Market built on Arc Network.**
 
-![Protocol 402 Banner](https://images.unsplash.com/photo-1639762681485-074b7f938ba0?q=80&w=2832&auto=format&fit=crop)
+> *"Give me a lever long enough and a fulcrum on which to place it, and I shall move the world."* — Archimedes
 
-## 🌟 Key Features
+![Fulcrum Banner](https://images.unsplash.com/photo-1639762681485-074b7f938ba0?q=80&w=2832&auto=format&fit=crop)
 
-### 1. Hybrid Execution Model
-The AI Agent acts as a "Router" to handle trades differently based on leverage:
-- **Spot Trades (1x)**: Executed via simulated **Circle CCTP Bridge** to Polygon. The agent bridges funds and purchases the real asset on Polymarket.
-- **Leverage Trades (>1x)**: Executed **Synthetically** on Arc. The agent keeps funds in the vault and tracks the position for liquidation risk (PvP against LP).
+## 🌐 Overview
 
-### 2. Autonomous Liquidation System 🛡️
-To protect the vault from bad debt, the Agent monitors all active leverage positions in real-time.
-- **Trigger**: If a position's PnL drops below **-80%**.
-- **Action**: The Agent automatically calls `settlePosition` on the smart contract to close the trade and secure the remaining collateral.
+**Fulcrum** is a next-generation prediction market interface that solves the liquidity fragmentation problem. By utilizing an **AI Agent** as a liquidity router, Fulcrum offers users the best of both worlds:
 
-### 3. Advanced User Interface
-- **Sell Tab**: Manage and close your open positions directly from the trade modal.
-- **Smart Input**: Enter amount in USDC, and the UI calculates shares and potential profit automatically.
-- **Real-time Notifications**: Get instant feedback on trade execution and realized PnL.
+1.  **Real Ownership:** Cross-chain execution for spot trades.
+2.  **Capital Efficiency:** Synthetic leverage for high-frequency trading.
 
-## 🏗 Architecture
+Built entirely on **Arc Network**, leveraging **Native USDC** for gas-abstracted, seamless transactions.
 
-### Frontend (`/app`)
-- **Framework**: Next.js 14 (App Router)
-- **Styling**: Tailwind CSS + Lucide Icons
-- **Auth**: Privy (Embedded Wallets)
-- **Web3**: Ethers.js v6
+---
 
-### Backend Agent (`/backend`)
-- **Language**: Python 3
-- **Libraries**: Web3.py, Requests
-- **Logic**: Event Listening, Oracle Integration, Liquidation Monitoring
+## 💡 The Hybrid Engine Architecture
 
-### Smart Contracts (`/contracts`)
-- **SignalVault.sol**: Manages user deposits, positions, and settlement logic.
+Fulcrum's core innovation is its **"Router Agent"**, which dynamically routes trades based on user risk appetite:
 
-## 🚀 Getting Started
+### 🐢 Path A: Spot Execution (1x Leverage)
+* **Target:** Conservative Traders.
+* **Mechanism:** Cross-Chain via **Circle CCTP**.
+* **Flow:** The Agent detects a 1x trade, simulates bridging USDC to Polygon, and purchases the real asset on Polymarket. The user owns the underlying probability share.
 
-### Prerequisites
-- Node.js 18+
-- Python 3.10+
-- An Arc Testnet Wallet
+### 🐇 Path B: Synthetic Execution (2x-5x Leverage)
+* **Target:** Aggressive Traders / Hedgers.
+* **Mechanism:** PvP against **SignalVault (LP Pool)**.
+* **Flow:** The Agent locks collateral on Arc Network instantly. No bridging required. The position is synthetic, allowing for high-speed entry/exit and up to **5x Leverage**.
 
-### 1. Setup Frontend
-```bash
-npm install
-npm run dev
-```
-Visit `http://localhost:3000`
+---
 
-### 2. Setup Backend Agent
-```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+## 🛡️ Autonomous Risk Agent (The Brain)
 
-# Configure .env
-# ARC_RPC_URL=...
-# CONTRACT_ADDRESS=...
+The system is guarded by an off-chain Python AI Agent that ensures solvency and fair pricing.
 
-python3 agent.py
-```
+* **Oracle Feed:** Fetches real-time probabilities from Polymarket via the **x402 Protocol** (simulating data monetization/verification).
+* **Liquidation Engine:** Monitors all active synthetic positions. If a leveraged position's PnL drops below **-80%**, the Agent automatically triggers `settlePosition` to protect the Liquidity Providers (LPs).
+* **Gas Efficiency:** All agent actions are executed on Arc Network using native USDC, minimizing operational overhead.
 
-## 📜 License
-MIT
+---
+
+## 🛠 Tech Stack
+
+| Component | Technology | Role |
+| :--- | :--- | :--- |
+| **Network** | **Arc Testnet** | Layer 1 Blockchain (Native USDC Gas) |
+| **Contract** | **Solidity** | `SignalVault.sol` (Liquidity & Position Logic) |
+| **Backend** | **Python 3** | AI Agent, Event Listener, Risk Manager |
+| **Frontend** | **Next.js 14** | Hybrid Trading Interface |
+| **Auth** | **Privy** | Gasless Onboarding & Embedded Wallets |
+| **Bridge** | **Circle CCTP** | Cross-Chain Simulation Infrastructure |
+
+---
+
+## 📂 Repository Structure
+
+```text
+fulcrum/
+├── 📁 contracts/       # Hardhat project & Smart Contracts
+│   └── SignalVault.sol # Main Liquidity Vault logic
+├── 📁 frontend/        # Next.js App (The Trading Terminal)
+│   ├── app/page.tsx    # Main Hybrid Interface
+│   └── ...
+├── 📁 agent/           # Python AI Agent (The Brain)
+│   ├── agent.py        # Main Router Logic
+│   └── requirements.txt
+└── README.md           # Documentation
